@@ -1,5 +1,7 @@
 module Encoref
 
-# Write your package code here.
+include("matchfuns.jl")
+
+export CorefSystem, coref
 
 end
