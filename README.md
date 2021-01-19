@@ -9,7 +9,7 @@ Entity coreference in julia
 
 ## The task
 
-A coreference task is made up of:
+A coreference task is made up of a database pair:
 - named entity reference set pairs
   - references to entities from two different databases organized to pairs that have the same *type* - so they have comparable attributes
   - these are essentially pairs of tables with matching column names and types
@@ -18,26 +18,38 @@ A coreference task is made up of:
 
 ## Algorithm outline
 
-- determinants of a roll:
-  - a chain of relation pairs, with directions
-  - parameters for rolling - `left_subset`, `right_subset`, `top_n`, ...
+### Space needs
+- 2 entity reference space pairs
+  - entity reference spaces are 2d arrays of indices, with a 1d array describing what types the indices in specific columns of the array belong to
+  - a pair contains a space for both databases in the coreference task
+  - 2 pairs are needed as some mutations require the space to transforming from one stage to the next
+- 2 sorted joiner for each relationship pair, to make repeated lookups faster
+- preparation space for matching
+  - as one searches for matches in a pair of reference paths, this serves as a store for *best so far* matches
+- latent variables of current matches
+  - **TODO**
 
-- one roll:
-  - the algorithm takes an entity reference set pair - possibly takes subsets of one or both sides - from the root of the relation pair chain
-  - creates matches using simple fuzzy matching
-  - takes the `top_n` best matches
-  - creates a path pair using the next relation pair in the chain
-  - matches the paths based on similarities among the entity references making up the paths
-    - this, just like the initial fuzzy matching utilizes the information whether some references have been established to be coreferent before
-  - iterates the process - with longer paths in the pairs - until it reaches the end of the relation pair chain of the roll - or runs out of memory
-  - stores the best matches and uses them to create established coreferences
+### Steps
 
-the algorithm executes such rolls until it reaches a state where either the established coreference resolution is satisfactory or it deems further rolls useless
+- reset space pair with a sample from an entity type
+  - can take sample with differing sample sizes on either side
+- extend space pair using a relation pair
+  - this requires the space of 2 space pairs to create
+  - the space width increases
+- organize the space pair to reflect the best matches
+  - can only let the `top_n` matches to remain in the space
+  - **WIP**
+- integrate results from matching in a space pair to latent variables of current matches
+  - **TODO**
+
+
+the algorithm executes such steps until it reaches a state where either the established coreference resolution is satisfactory or it deems further steps useless
 
 
 ## Open questions
 
-- how to determine the necessary rolls
+- how to determine the necessary steps
+  - introducing some obvious rules, like no reset before integrating results
 - how to reduce and/or calibrate the large number of parameters
-- how to determine thresholds for establishing a coreference match
-
+- how to determine thresholds for establishing a coreference match, from the latent variables
+- what happens if we run out of space during an extension step
