@@ -1,35 +1,45 @@
-using DataFrames, JSON
-import ParquetFiles
-
 struct DfPair
     df1::DataFrame
     df2::DataFrame
 end
 
-struct Match
-    i::Int32
-    j::Int32
-    dist::Float64
+abstract type AbstractMatch end
+
+struct Match <: AbstractMatch
+    i::Int
+    j::Int
+    dist::Real
 end
 
-struct Normalizer
-    means::Array{Float64, 1}
-    stds::Array{Float64, 1}
+struct HalfMatch <: AbstractMatch
+    ind::Int
+    dist::Real
+end
 
-    function Normalizer(dfp::DfPair)
-        dfs1, dfs2 = sample.([dfp.df1, dfp.df2])
-        raw_dist_arr = [col_dist.(dfs1[!, col], dfs2[!, col]) for col in names(dfs1)]
-        means, stds = (mean.(raw_dist_arr), std.(raw_dist_arr))
-        nonzero_stds = @. ifelse(stds > 0, stds, 1)
-        multiplier =
-            [
-                (arr .- mu) ./ rho
-                for (arr, mu, rho) in zip(raw_dist_arr, means, nonzero_stds)
-            ] |>
-            mean |>
-            std
-        new(means, nonzero_stds * multiplier)
-    end
+isless(x::AbstractMatch, y::AbstractMatch) = x.dist < y.dist;
+
+abstract type StepParameters end
+
+struct InitParams <: StepParameters
+    entity_type::String
+    left_sample::Int 
+    right_sample::Int
+end
+
+struct ExtendParams <: StepParameters
+    rel_pair_ind::Int
+    root_side::Int
+end
+
+struct MatchParams <: StepParameters
+    needed_matches::Int
+end
+
+struct IntegrateParams <: StepParameters end
+
+struct Normalizer
+    means::Array{Real, 1}
+    stds::Array{Real, 1}
 end
 
 struct SortedJoiner
@@ -39,18 +49,7 @@ struct SortedJoiner
         SubArray{Int, 1, Array{Int, 2}, Tuple{Array{Int, 1}, Int}, false},
         1,
     }
-
-    function SortedJoiner(arr::Array{Int, 2})
-        sinds = [sortperm(arr[:, i]) for i in axes(arr, 2)]
-        new(arr, sinds, [view(arr, sinds[i], i) for i in axes(arr, 2)])
-    end
-
-    function SortedJoiner(df::DataFrame)
-        SortedJoiner(hcat(df[:, 1], df[:, 2]))
-    end
-
 end
-
 
 struct RelPair
     sj1::SortedJoiner
@@ -58,25 +57,68 @@ struct RelPair
     colmap::Tuple{String, String}
 end
 
-get_pair(base, fp) =
-    [ParquetFiles.load(joinpath(base, fp, "$i.parquet")) |> DataFrame for i = 0:1]
-
-
 struct CorefSystem
     esp_dict::Dict{String, DfPair}
+    normalizers::Dict{String, Normalizer}
     relps::Array{RelPair, 1}
-
-    function CorefSystem(dir_path::String)
-        esp_base, relp_base = [joinpath(dir_path, s) for s in ["esp", "relp"]]
-        esp_dict = Dict(
-            esp_p => DfPair(get_pair(esp_base, esp_p)...) for esp_p in readdir(esp_base)
-        )
-        relps = [
-            RelPair(
-                (SortedJoiner.(get_pair(relp_base, relp_p)))...,
-                (JSON.parsefile(joinpath(relp_base, relp_p, "colmap.json")) |> Tuple),
-            ) for relp_p in readdir(relp_base)
-        ]
-        new(esp_dict, relps)
-    end
 end
+
+mutable struct EntityRefSpace
+    space::Array{Int, 2}
+    height::Int
+    width::Int
+    entity_types::Array{String, 1}
+end
+
+struct SpacePair
+    erspace1::EntityRefSpace
+    erspace2::EntityRefSpace
+end
+
+heights(space_pair::SpacePair) = (space_pair.erspace1.height, space_pair.erspace2.height)
+spaces(space_pair::SpacePair) = (space_pair.erspace1, space_pair.erspace2)
+innerspaces(space_pair::SpacePair) = (ers.space for ers in spaces(space_pair))
+
+
+mutable struct CorefProposal
+    ind::Int
+    latent_vars::Array{Real,1}
+end
+
+struct CorefSpace
+    latent_match_vars::Dict{String, Array{Array{CorefProposal,1},1}}
+    prepspace::Array{HalfMatch, 2}
+    free_i::Array{Bool, 1}
+    free_j::Array{Bool, 1}
+    param_log::Array{StepParameters, 1}
+end
+
+mutable struct CorefResolver
+    crs::CorefSystem
+    crspace::CorefSpace
+    space_pairs::Tuple{SpacePair, SpacePair}
+    leftspace_main::Bool
+end
+
+function valid(proposal::CorefProposal)
+    proposal.ind > 0
+end
+
+function parse(lvars::Array{Array{CorefProposal,1},1})
+    out = Array{Array{Int, 2}, 1}()
+    for (fun, lvar_arr) in zip([x -> x, reverse], lvars)
+        for (i, propsal) in enumerate(lvar_arr)
+            if valid(propsal)
+                r = reshape(fun([i, propsal.ind]), (1, 2))
+                (r in out) && continue 
+                push!(out, r)
+            end
+        end
+    end
+    vcat(out...)
+end
+
+result(crr::CorefResolver) = Dict(name=> parse(lvars) for (name, lvars) in crr.crspace.latent_match_vars)
+main(crr::CorefResolver) = crr.space_pairs[crr.leftspace_main ? 1 : 2]
+innerspaces(crr::CorefResolver) = (crr.leftspace_main ? x -> x : reverse)(crr.space_pairs)
+switch!(crr::CorefResolver) = (crr.leftspace_main = !crr.leftspace_main)

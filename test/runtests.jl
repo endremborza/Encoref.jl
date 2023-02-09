@@ -1,6 +1,7 @@
 using Encoref
 using Test, ParquetFiles, DataFrames
 
+include("testutils.jl")
 
 function load_result(dir::String)
     res_dir = joinpath(dir, "result")
@@ -17,6 +18,10 @@ test_dirs = ["test_data/test_sys_$i" for i in 0:0]
 
 @testset "Encoref.jl" begin
     @test 1 == 1
+end
+
+@testset "step-init" begin
+    
 end
 
 @testset "e2e" begin
